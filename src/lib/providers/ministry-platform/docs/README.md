@@ -187,6 +187,12 @@ mp.sendMessage(message: MessageInfo, attachments?: File[]): Promise<Communicatio
 
 When `attachments` is non-empty the request goes out as multipart form data, otherwise as JSON.
 
+`CommunicationInfo.CommunicationType` mirrors MP's `Platform.Messaging.CommunicationType`
+enum — `'Unknown' | 'Email' | 'SMS' | 'RssFeed' | 'GlobalMFA'`. An `'SMS'` communication must
+also carry `TextPhoneNumberId` (`dp_SMS_Numbers.SMS_Number_ID` of the outbound number); the
+type requires it, and `createCommunication` re-checks before it spends a round trip. MP answers
+either mistake with an opaque HTTP 500 rather than a 400.
+
 ### Files
 
 ```typescript
