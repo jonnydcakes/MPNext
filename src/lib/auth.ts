@@ -4,6 +4,8 @@ import { customSession } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { MPHelper } from "@/lib/providers/ministry-platform";
 import { sanitizeGuid } from "@/lib/providers/ministry-platform/utils/filter-sanitize";
+import { rememberIdToken } from "@/lib/id-token-store";
+import { MP_PROVIDER_ID } from "@/lib/auth-endsession";
 
 const mpBaseUrl = process.env.MINISTRY_PLATFORM_BASE_URL!;
 
@@ -228,7 +230,7 @@ const options = {
     genericOAuth({
       config: [
         {
-          providerId: "ministry-platform",
+          providerId: MP_PROVIDER_ID,
           discoveryUrl: `${mpBaseUrl}/oauth/.well-known/openid-configuration`,
           // No issuer pinning here, deliberately. better-auth 1.7.0–1.7.2 keyed
           // accounts on (issuer, accountId) and refused to initialize a discovery
@@ -354,6 +356,14 @@ const options = {
             // `accountLinking` comment above. MP's userinfo response may not
             // send `email_verified` at all, so default to false rather than
             // assume it. `src/auth.test.ts` guards this.
+            //
+            // Keep the ID token for sign-out, which sends it as `id_token_hint`
+            // — without it MP ignores `post_logout_redirect_uri` and leaves the
+            // user on its own logged-out page. Captured HERE because this is
+            // the one place holding both the tokens and the validated `sub`;
+            // reading it back off the account record at sign-out returns
+            // nothing in this configuration. See src/lib/id-token-store.ts.
+            rememberIdToken(sub, tokens.idToken);
             return {
               sub,
               email: typeof profile.email === "string" ? profile.email : null,

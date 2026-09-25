@@ -536,19 +536,19 @@ Two mechanics worth knowing before editing these:
 Keep branch gates loose where the denominator is small - `src/app/**` has only 10
 branches in total, so a single uncovered one costs 10 points.
 
-### Current coverage (1015 tests, 59 files)
+### Current coverage (1049 tests, 61 files)
 
 Whole app, as `npm run test:coverage` prints it - every `src/**/*.{ts,tsx}`
 excluding generated models, codegen scripts, `src/components/ui/`, and test files.
-Measured 2026-09-12 on `docs/release-readiness-refresh`, Vitest 4.1.11, run in
-6.5s:
+Measured 2026-09-24 on `fix/signout-id-token-hint`, Vitest 4.1.11, run in
+5.1s:
 
 | Metric | Value |
 |---|---|
-| Statements | **99.74%** (1159/1162) |
-| Branches | **97.21%** (593/610) |
-| Functions | **99.31%** (291/293) |
-| Lines | **99.91%** (1126/1127) |
+| Statements | **99.75%** (1220/1223) |
+| Branches | **97.5%** (625/641) |
+| Functions | **99.33%** (301/303) |
+| Lines | **99.91%** (1176/1177) |
 
 This is now a single honest number. Earlier revisions of this doc quoted two
 figures - a high non-UI one and a low whole-app one - because feature components
@@ -560,7 +560,7 @@ or unreachable:
 | File | Uncovered | Why |
 |---|---|---|
 | `contact-logs.tsx` | 232 | `if (!editingLog) return;` in the update handler. Every path that clears `editingLog` also closes the dialog in the same update, so the form cannot submit from a render where it is null. |
-| `lib/auth.ts` | 408 | The one-line arrow delegating to `enrichSessionUser`; better-auth closes over it. |
+| `lib/auth.ts` | 418 | The one-line arrow delegating to `enrichSessionUser`; better-auth closes over it. |
 | `client.ts` | funcs 75% | The token-getter closure handed to `HttpClient`. |
 | `app/api/auth/[...all]/route.ts` | 53-57 | The non-`/api/auth` and empty-path arms of `relativeAuthPath`; Next only routes `/api/auth/*` here. |
 | `contact-logs/actions.ts` | 64 | The non-`Error` arm of the `getContactLogTypes` catch wrapper. |
@@ -688,16 +688,16 @@ Things that will bite whoever edits these:
 
 ## Test File Inventory
 
-Per-file counts below are from `npx vitest run --reporter=json` on 2026-09-12;
-they sum to the 1015 in the coverage summary.
+Per-file counts below are from `npx vitest run --reporter=json` on 2026-09-24;
+they sum to the 1049 in the coverage summary.
 
 | Test File | Tests | What It Covers |
 |-----------|-------|----------------|
 | `components/contact-logs/actions.test.ts` | 77 | Contact log CRUD actions, security-role gate on reads AND writes, argument guards, ownership policy, numeric-ID injection rejection |
 | `services/contactLogService.test.ts` | 72 | Contact log CRUD, service-layer read/write gate, date conversion, Zod validation, filter-injection regression guard |
 | `lib/providers/ministry-platform/helper.test.ts` | 54 | MPHelper CRUD, validation, procedures, files |
+| `auth.test.ts` | 50 | `enrichSessionUser`, cached User_ID resolution, OAuth config guards, ID-token capture for sign-out |
 | `lib/providers/ministry-platform/utils/filter-sanitize.test.ts` | 49 | Quote doubling, LIKE escaping, GUID rejection, numeric-ID validation |
-| `auth.test.ts` | 47 | `enrichSessionUser`, cached User_ID resolution, OAuth config guards |
 | `lib/security-headers.test.ts` | 41 | Static header values (framing, sniffing, referrer, permissions, HSTS in production only), `originOf`, nonce generation, every CSP directive, enforce vs report-only |
 | `components/contact-logs/contact-logs.test.tsx` | 40 | Delete-confirmation gate, form validation, error surfacing (MP write path), edit/cancel paths, in-flight double-write guard, log-type colour arms, MP wall-clock date rendering, unparseable-date placeholder (one bad row must not blank the list) |
 | `services/authorizationService.test.ts` | 40 | MP security-role gate for reads and writes, `hasSecurityRole`, `MP_SECURITY_ROLES` + deprecated `MP_WRITE_SECURITY_ROLES` fallback, `mp.read.unauthorized` / `mp.write.unauthorized` denials, no cross-request caching |
@@ -712,18 +712,20 @@ they sum to the 1015 in the coverage summary.
 | `components/contact-lookup/contact-lookup-search.test.tsx` | 18 | Empty query clears results without calling the action, in-flight lock via the disabled button, Enter vs button submit, action rejection surfaced |
 | `services/domainTimezoneService.test.ts` | 18 | Windows-to-IANA mapping, DST, round-tripping, cache |
 | `components/layout/header.test.tsx` | 17 | App-title env fallback, profile-loading state, avatar vs icon fallback, the tooltip chain (incl. falling back to `mpEmail`, never the synthetic session email), sidebar open/close ownership |
+| `components/user-menu/user-menu.test.tsx` | 17 | Radix trigger opens on pointerDown, sign-out fires once, `onClose` ordering, degenerate-profile sign-out, failed sign-out alerts, successful sign-out stays silent, NEXT_REDIRECT re-thrown not alerted, session cookie refreshed before sign-out and a failed refresh never blocks it |
 | `services/contactService.test.ts` | 17 | Contact search, getByGuid, updateContact, service-layer read/write gate (F10) |
 | `components/layout/dynamic-breadcrumb.test.tsx` | 16 | Mapped route labels, GUID leaf renders `Details` (any case), GUID-ish segments must NOT match, crude fallback retained, doubled/trailing slashes, all three `customSegments` shapes |
+| `components/user-menu/actions.test.ts` | 16 | Sign-out, OAuth end-session redirect, `id_token_hint` from the store with account-record fallback, read before sign-out, never blocks sign-out or logs the token |
 | `lib/providers/ministry-platform/services/procedure.service.test.ts` | 16 | Procedure listing and execution, name encoding |
 | `app/api/auth/[...all]/route.test.ts` | 15 | Route allowlist (deny-by-default), `toNextJsHandler` wiring, exported methods |
 | `components/contact-lookup/contact-lookup-results.test.tsx` | 15 | Empty state, row rendering with missing optional fields, row navigation |
-| `components/user-menu/user-menu.test.tsx` | 15 | Radix trigger opens on pointerDown, sign-out fires once, `onClose` ordering, degenerate-profile sign-out, failed sign-out alerts, successful sign-out stays silent, NEXT_REDIRECT re-thrown not alerted |
 | `lib/providers/ministry-platform/client.test.ts` | 15 | OAuth token management, `expires_in`-derived lifetime and its 30s floor |
 | `lib/providers/ministry-platform/services/communication.service.test.ts` | 13 | Email/SMS JSON vs multipart paths |
 | `app/(web)/layout.test.tsx` | 12 | `AuthWrapper` is an ancestor of the page and sits outside `Providers`; Header-in-Suspense; both metadata title branches |
 | `components/contact-lookup/contact-lookup.test.tsx` | 12 | Search-to-results state wiring, error and empty propagation, emptying the box clears stale results |
 | `components/shared-actions/user.test.ts` | 12 | `getCurrentUserProfile` delegation, server-computed `canAccessContactFeatures`, role-less users keep their profile |
 | `components/layout/sidebar.test.tsx` | 11 | Nav label+href pairs, `onClose` from X and from a nav link, panel stays mounted when closed, Contact Lookup hidden/shown by `canAccessContactFeatures` (fails closed) |
+| `lib/id-token-store.test.ts` | 11 | Store/take once, per-user isolation, expiry on read and on write, size bound, `globalThis` pinning |
 | `app/(web)/contactlookup/[guid]/page.test.tsx` | 10 | Next.js 16 async `params` await, promises passed down unresolved for streaming, `Contact_ID` guard, rejection propagation |
 | `components/contact-lookup/actions.test.ts` | 10 | Search contacts action, security-role read gate, denial not flattened into a generic error |
 | `services/sessionContextService.test.ts` | 10 | Acting-user resolution, `mp.write.non_user` warning |
@@ -735,6 +737,7 @@ they sum to the 1015 in the coverage summary.
 | `services/userService.test.ts` | 8 | User profile lookup, GUID + User_ID validation |
 | `app/(web)/error.test.tsx` | 7 | Shell boundary: retry is called, digest shown as a reference code, and the error message reaches neither the log nor the page |
 | `app/(web)/page.test.tsx` | 7 | Demo tile mounted in Suspense and omitted without access; page stays synchronous and prop-less (no MP fetch) |
+| `lib/auth-endsession.test.ts` | 7 | End-session URL, `id_token_hint` present/absent/empty, encoding, trailing slash, provider-id pin |
 | `lib/utils.test.ts` | 7 | `cn()` Tailwind class merging |
 | `app/error.test.tsx` | 6 | Root boundary for the shell-less recovery routes: retry, and a plain `/signin` link that does not depend on retrying |
 | `app/global-error.test.tsx` | 6 | Renders its own html/body (via `renderToStaticMarkup`), sets `document.title` with no metadata export, imports no app code |
@@ -743,7 +746,6 @@ they sum to the 1015 in the coverage summary.
 | `app/providers.test.tsx` | 5 | Children nested inside `UserProvider`, not beside it |
 | `app/session-error/page.test.tsx` | 5 | Sign-out is a real submit inside `<form action>` and actually invokes the action |
 | `components/shared-actions/domain.test.ts` | 5 | `getMpTimezone` delegation and its authenticated-session check (F11) |
-| `components/user-menu/actions.test.ts` | 5 | Sign-out + OAuth end session redirect |
 | `lib/providers/ministry-platform/auth/client-credentials.test.ts` | 5 | Client-credentials token grant |
 | `app/layout.test.tsx` | 4 | `<html lang>`/`<body>` pair, children pass through by identity (no wrapping) |
 | `components/layout/auth-wrapper.test.tsx` | 4 | Auth gating wrapper (authentication only — no role check) |
@@ -752,7 +754,7 @@ they sum to the 1015 in the coverage summary.
 | `lib/next-config-headers.test.ts` | 3 | The static headers are actually attached to `/(.*)` in `next.config.ts`, and no CSP is set there — the nonce-based one is per-request in `src/proxy.ts` |
 | `app/(web)/home/page.test.tsx` | 2 | Unconditional redirect to `/`, never looping back to `/home` |
 | `contexts/session-context.test.tsx` | 2 | `useAppSession` wrapper |
-| **Total** | **1015** | 59 files |
+| **Total** | **1049** | 61 files |
 
 ## Ministry Platform Safety in Tests
 

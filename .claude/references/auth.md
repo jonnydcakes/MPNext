@@ -49,7 +49,9 @@ The cast is needed because `customSessionClient` type inference doesn't include 
 | `src/contexts/session-context.tsx` | `useAppSession()` — thin wrapper around `authClient.useSession()` |
 | `src/components/layout/auth-wrapper.tsx` | Server guard for the (web) group — redirects to `/signin` (no session) or `/session-error` (session without `userGuid`). Authentication only; it does **not** check roles |
 | `src/app/session-error/page.tsx` | Recovery page for broken sessions — provides a sign-out even when the header/menu can't render (outside the (web) group, so not self-guarded) |
-| `src/components/user-menu/actions.ts` | `handleSignOut()` — OIDC logout flow |
+| `src/components/user-menu/actions.ts` | `handleSignOut()` — OIDC logout flow; sends `id_token_hint` so MP returns the user to the app |
+| `src/lib/auth-endsession.ts` | `buildEndSessionUrl()` and `MP_PROVIDER_ID` — the end-session URL, and why `id_token_hint` is load-bearing |
+| `src/lib/id-token-store.ts` | Process-wide store of each user's ID token, written in `getUserInfo` at sign-in and taken once at sign-out |
 | `src/app/signin/page.tsx` | Sign-in **route** — a server component whose only job is `export const dynamic = "force-dynamic"` (route segment config is ignored in a `"use client"` file, and the nonce-based CSP needs a per-request render) and rendering `<SignIn />` |
 | `src/components/sign-in/sign-in.tsx` | The sign-in page body — auto-redirects to OAuth exactly once per page load (ref guard), and sanitizes `callbackUrl` to a same-origin relative path (see [Open redirect on `/signin`](#open-redirect-on-signin-f3-closed-2026-09-12)) |
 | `src/services/authorizationService.ts` | The **authorization** gate — MP security-role check for reads and writes |
@@ -190,12 +192,15 @@ way it does:
 > every existing user silently becomes a new account. Details and the resulting
 > `>= 1.7.3` version floor: [Version Notes](#173--account-identity-reverted-breaking).
 
-> ℹ️ **RP-initiated logout is available but unused.** MP's discovery document
-> exposes `end_session_endpoint`, so 1.7 can build the provider logout URL
-> itself (including `id_token_hint`, which our hand-rolled URL omits).
-> `handleSignOut()` still constructs the URL manually and ignores the `url` that
-> `auth.api.signOut()` now returns — a possible simplification, deliberately
-> left out of the 1.7 migration.
+> ℹ️ **1.7's built-in RP-initiated logout URL is not used, and cannot be.**
+> MP's discovery document exposes `end_session_endpoint`, so `auth.api.signOut()`
+> can return a provider logout URL with `id_token_hint` taken from the account
+> record. It looks up the session and then the account through the adapter, and
+> with the in-memory adapter the server-action bundle holds neither — so
+> `signOut()` returns no provider logout URL at all (with a persistent database
+> it would). `handleSignOut()` builds the URL itself and takes the token from
+> `src/lib/id-token-store.ts`, captured in `getUserInfo` at sign-in.
+> See [Logout Flow](#logout-flow).
 
 #### `nonce` binding is off, and must stay off
 
@@ -465,15 +470,29 @@ exposes.
 ## Logout Flow
 
 ```
-1. User clicks sign out → calls handleSignOut() server action
-2. auth.api.signOut() → clears Better Auth session cookie
-3. Redirect to MP endsession endpoint:
-   ${MP_BASE_URL}/oauth/connect/endsession?post_logout_redirect_uri=${APP_URL}
-4. MP clears its session → redirects back to app
-5. App loads without session → proxy redirects to /signin
+0. (At sign-in) getUserInfo parks tokens.idToken in src/lib/id-token-store.ts, keyed by sub
+1. User clicks sign out → the user menu calls GET /api/auth/get-session (re-issues the
+   JWT cookie cache, so the server action can see the session), then handleSignOut()
+2. Read the ID token for the session's userGuid — BEFORE signing out, since signing out destroys the session
+3. auth.api.signOut() → clears Better Auth session cookie
+4. Redirect to MP endsession endpoint:
+   ${MP_BASE_URL}/oauth/connect/endsession?post_logout_redirect_uri=${APP_URL}&id_token_hint=${ID_TOKEN}
+5. MP clears its session → redirects back to app
+6. App loads without session → proxy redirects to /signin
 ```
 
-No `id_token_hint` is passed (optional in OIDC spec). The `post_logout_redirect_uri` must be registered in the MP OAuth client configuration.
+**`id_token_hint` is required for step 5.** It is optional in the OIDC spec and
+MP ends its session without it, but MP (IdentityServer) honours
+`post_logout_redirect_uri` only when the hint identifies the client — without
+it the user is left on MP's logged-out page. The token is read from
+`src/lib/id-token-store.ts` first, with the account record only as a fallback,
+because the account lookup finds nothing in this configuration (see that file).
+The server action can read the session only from the JWT cookie cache, which is
+why step 1 refreshes it. If no token is available — e.g. the session predates a
+restart — sign-out still works without the hint and logs
+`[signout] id_token_hint omitted (<reason>)`; every no-hint path, including a
+failed lookup, logs that line. The `post_logout_redirect_uri` must also be
+registered on the MP OAuth client.
 
 Sign-out is entirely server-side (`auth.api.signOut()`, called in-process from
 the server action) — the browser never calls a `/sign-out` HTTP endpoint, which
@@ -533,8 +552,11 @@ dead end:
 - `/session-error` (in `src/app/session-error/`, **outside** the `(web)` route
   group so it isn't wrapped by `AuthWrapper`) renders a plain page with a
   `handleSignOut` form button, giving the user an unconditional exit.
-- After sign-out the Better Auth cookie is cleared and the user is bounced to
-  MP's endsession endpoint, then back through `/signin` for a fresh login.
+- After sign-out the Better Auth cookie is cleared and the user is sent to MP's
+  endsession endpoint. This path cannot send `id_token_hint` — the stored token
+  is looked up by `userGuid`, and this session has none — so MP ends its session
+  but leaves the user on its logged-out page, and they start a fresh sign-in
+  from the app themselves.
 
 Guarded by `src/components/layout/auth-wrapper.test.tsx`.
 

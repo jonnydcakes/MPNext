@@ -2,46 +2,60 @@
 
 ## Current Status
 ✅ Server-side sign-out via the `handleSignOut()` server action
-✅ OIDC RP-initiated logout implemented (Option A below)
+✅ OIDC RP-initiated logout implemented (Option A below), with `id_token_hint`
 ⚠️ Requires a **Post-Logout Redirect URI** registered on the MP OAuth client
 
 ## What's Working
 - Better Auth session cookie cleared server-side by `auth.api.signOut()`
 - The browser is then redirected to Ministry Platform's `end_session` endpoint,
   which ends the MP OAuth (SSO) session
+- The redirect carries `id_token_hint`, which is what makes MP honour
+  `post_logout_redirect_uri` (see below)
 - MP redirects back to the app, which now has no session, so `src/proxy.ts`
   sends the user to `/signin`
 
 ## Implementation
 
-All of it lives in `src/components/user-menu/actions.ts`:
+Three pieces:
+
+- **`src/lib/id-token-store.ts`** — `getUserInfo` in `src/lib/auth.ts` parks
+  `tokens.idToken` here at sign-in, keyed by the validated `sub` (the
+  `userGuid`). Process-wide (`globalThis`), bounded, expiring, and read once.
+- **`src/lib/auth-endsession.ts`** — `buildEndSessionUrl()` builds
+  `${MINISTRY_PLATFORM_BASE_URL}/oauth/connect/endsession` with
+  `post_logout_redirect_uri` and, when available, `id_token_hint`.
+- **`src/components/user-menu/actions.ts`** — `handleSignOut()`:
 
 ```typescript
-'use server';
-
 export async function handleSignOut() {
-  // Clear the Better Auth session
-  await auth.api.signOut({ headers: await headers() });
+  const requestHeaders = await headers();
+
+  // Read the hint while the session still exists — signing out destroys it.
+  const idToken = await findMpIdToken(requestHeaders); // store first, account record as fallback; never throws
+
+  await auth.api.signOut({ headers: requestHeaders });
 
   const baseUrl = process.env.MINISTRY_PLATFORM_BASE_URL;
   if (!baseUrl) {
     throw new Error('MINISTRY_PLATFORM_BASE_URL is not configured');
   }
 
-  const endSessionUrl = `${baseUrl}/oauth/connect/endsession`;
-  const params = new URLSearchParams({
-    post_logout_redirect_uri:
-      process.env.BETTER_AUTH_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000',
-  });
-
-  redirect(`${endSessionUrl}?${params.toString()}`);
+  redirect(
+    buildEndSessionUrl({
+      baseUrl,
+      postLogoutUri: process.env.BETTER_AUTH_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000',
+      idToken,
+    }),
+  );
 }
 ```
 
 Callers: the user menu (`src/components/user-menu/user-menu.tsx`) and the
 broken-session recovery page (`src/app/session-error/page.tsx`), which wires it to
 a plain `<form action={handleSignOut}>` so a user with an unusable session can
-still get out.
+still get out. (That path cannot send `id_token_hint` — the session has no
+`userGuid` to look the token up by — so the user ends up on MP's logged-out
+page. Signing out is what matters there.)
 
 ### Sign-out is server-side only
 
@@ -52,18 +66,31 @@ browser returns 404. That is deliberate: sign-out runs in-process through
 accidental client-side call loud instead of a silent no-op. If a client-side
 sign-out is ever genuinely required, add the path to the allowlist first.
 
-### No `id_token_hint`
+### `id_token_hint` is required for the return trip
 
-The end-session URL carries only `post_logout_redirect_uri`. `id_token_hint` is
-optional in the OIDC RP-initiated logout spec, and MP accepts the request
-without it.
+`id_token_hint` is optional in the OIDC RP-initiated logout spec, and MP does
+end its session without it. But MP runs IdentityServer, which honours
+`post_logout_redirect_uri` **only** when the hint identifies the client.
+Without it, MP discards the redirect and leaves the user on its own logged-out
+page (which serves `window.returnUrl = ""`). With it, MP sends the user back.
 
-Better Auth 1.7 *can* build this URL itself — MP's discovery document exposes
-`end_session_endpoint`, and `auth.api.signOut()` now returns a `url` that
-includes `id_token_hint`. `handleSignOut()` ignores that return value and
-constructs the URL by hand. That is a known, deliberate simplification left out
-of the 1.7 migration, not an oversight; see
-`.claude/references/auth.md` § Better Auth 1.7 migration notes.
+The token comes from `src/lib/id-token-store.ts` first, with the account record
+only as a fallback. With the JWT cookie cache and the in-memory adapter, the
+account lookup runs in a different module instance from the one sign-in wrote
+to and finds nothing — which is also why better-auth 1.7's own provider-logout
+URL is not used: `auth.api.signOut()` finds no session or account in that
+instance and returns no URL at all.
+
+The server action can read the session only from the JWT cookie cache, which
+lasts an hour. So the user menu calls `GET /api/auth/get-session` just before
+`handleSignOut()`: that runs in the auth route, which holds the session, and
+re-issues the cookie.
+
+If no token is available — a session that predates a restart, say — sign-out
+still works without the hint, and the server logs
+`[signout] id_token_hint omitted (<reason>)`. If a user is stranded on MP's page
+and that line is **absent**, the app sent the hint and the remaining problem is
+the Post-Logout Redirect URI registration below.
 
 ## Ministry Platform OAuth Configuration
 
@@ -101,12 +128,18 @@ users to localhost.
 
 Unit coverage: `src/components/user-menu/actions.test.ts` pins the
 `auth.api.signOut` call, the end-session redirect, the `NEXTAUTH_URL` and
-localhost fallbacks, and the missing-`MINISTRY_PLATFORM_BASE_URL` throw.
+localhost fallbacks, the missing-`MINISTRY_PLATFORM_BASE_URL` throw, and the
+`id_token_hint` lookup (store first, account-record fallback, read before
+sign-out, never blocking sign-out, never logged). `src/lib/auth-endsession.test.ts`
+and `src/lib/id-token-store.test.ts` cover the URL builder and the store, and
+`src/auth.test.ts` asserts `getUserInfo` captures the token.
 
 **Manual (the only thing that exercises MP):**
 1. Sign in to the application
 2. Click "Sign out"
-3. You should bounce through Ministry Platform briefly, then back to the app
+3. You should bounce through Ministry Platform briefly, then back to the app.
+   If you are left on MP's logged-out page, check the server log for
+   `[signout] id_token_hint omitted` (see above)
 4. You land on `/signin`, which immediately restarts the OAuth flow
 5. MP should now ask for credentials rather than signing you straight back in —
    if it does not, the MP session was not ended (check the post-logout redirect

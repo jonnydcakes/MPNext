@@ -43,12 +43,17 @@ import type { MPUserProfile } from "@/lib/providers/ministry-platform/types";
  * shape, so a mock would test the mock.
  */
 
-const { mockHandleSignOut } = vi.hoisted(() => ({
+const { mockHandleSignOut, mockGetSession } = vi.hoisted(() => ({
   mockHandleSignOut: vi.fn(),
+  mockGetSession: vi.fn(),
 }));
 
 vi.mock("./actions", () => ({
   handleSignOut: mockHandleSignOut,
+}));
+
+vi.mock("@/lib/auth-client", () => ({
+  authClient: { getSession: mockGetSession },
 }));
 
 import { UserMenu } from "./user-menu";
@@ -184,6 +189,7 @@ describe("UserMenu", () => {
     installJsdomPolyfills();
     vi.clearAllMocks();
     mockHandleSignOut.mockResolvedValue(undefined);
+    mockGetSession.mockResolvedValue({ data: null, error: null });
     // jsdom's window.alert only logs "not implemented"; stub it so the calls are
     // assertable (and so a regression cannot spam the test output).
     alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
@@ -242,6 +248,35 @@ describe("UserMenu", () => {
 
       await waitFor(() => expect(mockHandleSignOut).toHaveBeenCalledTimes(1));
       expect(mockHandleSignOut).toHaveBeenCalledWith();
+    });
+
+    it("refreshes the session cookie through the auth route before signing out", async () => {
+      // handleSignOut reads the session from the JWT cookie cache to find the
+      // ID token for id_token_hint; a lapsed cache would drop the hint.
+      const order: string[] = [];
+      mockGetSession.mockImplementation(async () => {
+        order.push("getSession");
+        return { data: null, error: null };
+      });
+      mockHandleSignOut.mockImplementation(async () => {
+        order.push("handleSignOut");
+      });
+
+      const menu = await openMenu();
+      fireEvent.click(menu.getByRole("menuitem", { name: /sign out/i }));
+
+      await waitFor(() => expect(mockHandleSignOut).toHaveBeenCalledTimes(1));
+      expect(order).toEqual(["getSession", "handleSignOut"]);
+    });
+
+    it("still signs out when the session refresh fails", async () => {
+      mockGetSession.mockRejectedValue(new TypeError("Failed to fetch"));
+
+      const menu = await openMenu();
+      fireEvent.click(menu.getByRole("menuitem", { name: /sign out/i }));
+
+      await waitFor(() => expect(mockHandleSignOut).toHaveBeenCalledTimes(1));
+      expect(alertSpy).not.toHaveBeenCalled();
     });
 
     it("closes the parent shell before invoking the action", async () => {

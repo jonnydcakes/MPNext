@@ -122,8 +122,10 @@ What each one does:
 - **`searchContacts`** — gate is deliberately OUTSIDE the `try`, so `UnauthorizedError`
   reaches the caller instead of being flattened into "Failed to search contacts".
 - **`getContactDetails`** — gated read by `Contact_GUID`.
-- **`handleSignOut`** — `auth.api.signOut`, then `redirect()` to MP's
-  `/oauth/connect/endsession` (RP-initiated logout). Touches no MP table.
+- **`handleSignOut`** — reads the user's ID token (from `src/lib/id-token-store.ts`),
+  then `auth.api.signOut`, then `redirect()` to MP's `/oauth/connect/endsession`
+  with `id_token_hint` (RP-initiated logout; without the hint MP ignores
+  `post_logout_redirect_uri`). Touches no MP table.
 - **`getCurrentUserProfile`** — takes no parameters by design; the `User_GUID`
   comes from the session, never the caller. Adds `canAccessContactFeatures` from
   `AuthorizationService.hasSecurityRole` (the non-throwing form) so nav and
@@ -146,7 +148,7 @@ Three files deliberately do **not** call `requireSecurityRole`:
 |---|---|---|
 | `shared-actions/user.ts` | `auth.api.getSession()` + `hasSecurityRole` for the `canAccessContactFeatures` flag | Any MP user may sign in and must be able to load their own profile (avatar, name, sign-out) with no security role |
 | `shared-actions/domain.ts` | `auth.api.getSession()` | One domain-wide configuration string, not per-person data (F11 added this check; before it, the action had none at all) |
-| `user-menu/actions.ts` | Nothing beyond better-auth's own `signOut` | Reads and writes no MP table; signing out must work for any session, including a broken one |
+| `user-menu/actions.ts` | `auth.api.getSession()` (only to find whose ID token to send as `id_token_hint`), then better-auth's own `signOut` | Reads and writes no MP table; signing out must work for any session, including a broken one |
 
 `layout/auth-wrapper.tsx` also uses a bare `auth.api.getSession()` — correctly,
 since it is the session gate, not a data gate.

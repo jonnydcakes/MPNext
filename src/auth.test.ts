@@ -21,6 +21,8 @@ vi.mock('@/lib/providers/ministry-platform', () => ({
 }));
 
 import { auth, userAdditionalFields, enrichSessionUser, syntheticEmailForSub } from '@/lib/auth';
+import { MP_PROVIDER_ID } from '@/lib/auth-endsession';
+import { takeIdToken, __resetIdTokenStore } from '@/lib/id-token-store';
 
 /**
  * Auth Tests
@@ -456,6 +458,54 @@ describe('Auth - OAuth Configuration', () => {
     await expect(
       config.getUserInfo!({ accessToken: 'bad-token' } as OAuth2Tokens),
     ).resolves.toBeNull();
+  });
+
+  /**
+   * Sign-out sends the ID token as `id_token_hint`, or MP ignores
+   * `post_logout_redirect_uri` and leaves the user on its logged-out page.
+   * `getUserInfo` is the one place holding both the tokens and the validated
+   * `sub`, so it must park the token for `handleSignOut`
+   * (src/lib/id-token-store.ts explains why the account record can't be used).
+   */
+  it('keeps the ID token for sign-out, keyed by the validated sub', async () => {
+    __resetIdTokenStore();
+    const config = getMpProviderConfig();
+    const guid = 'ab12cd34-ef56-7890-abcd-ef1234567890';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ sub: guid, given_name: 'John', family_name: 'Doe' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await config.getUserInfo!({ accessToken: 'access-token', idToken: 'id.token.jwt' } as OAuth2Tokens);
+
+    expect(takeIdToken(guid)).toBe('id.token.jwt');
+  });
+
+  it('keeps nothing when the sign-in is refused', async () => {
+    // A profile getUserInfo rejects must not leave a token behind for a GUID
+    // that never signed in.
+    __resetIdTokenStore();
+    const config = getMpProviderConfig();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ sub: 'not-a-guid' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(
+      config.getUserInfo!({ accessToken: 'access-token', idToken: 'id.token.jwt' } as OAuth2Tokens),
+    ).resolves.toBeNull();
+    expect(takeIdToken('not-a-guid')).toBeNull();
+  });
+
+  it('registers the provider under the id sign-out filters accounts on', () => {
+    // If these drift apart, the sign-out account-record fallback silently
+    // finds nothing.
+    expect(getMpProviderConfig().providerId).toBe(MP_PROVIDER_ID);
   });
 
   it('should map profile to user with userGuid via mapProfileToUser', async () => {

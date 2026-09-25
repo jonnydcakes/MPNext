@@ -78,7 +78,7 @@ A modern Next.js application integrated with Ministry Platform authentication an
 - **Authorization**: Ministry Platform security-role gate on reads *and* writes, not just an authentication check
 - **Security Headers**: Nonce-based Content-Security-Policy, enforcing by default, applied per-request in the proxy
 - **Audit Attribution**: Writes carry the acting user's MP `User_ID`, so `dp_Audit_Log` records who actually did what
-- **Testing**: Vitest with 1,015 tests and enforced coverage thresholds in CI
+- **Testing**: Vitest with 1,049 tests and enforced coverage thresholds in CI
 
 ## Architecture
 
@@ -643,7 +643,7 @@ All services follow the singleton pattern; all except `SessionContextService` us
 
 ## Testing
 
-The project uses **Vitest 4** — 1,015 tests at 99.74% statement coverage, gated in CI.
+The project uses **Vitest 4** — 1,049 tests at 99.75% statement coverage, gated in CI.
 
 ### Test Infrastructure
 
@@ -670,14 +670,14 @@ Tests are co-located with the code they cover — `foo.ts` sits next to `foo.tes
 
 | Area | Coverage |
 |------|----------|
-| Overall | 99.74% statements, 97.21% branches (gated in CI) |
+| Overall | 99.75% statements, 97.5% branches (gated in CI) |
 | Services (`src/services/`) | 100% |
 | Server actions (`**/actions.ts`) | 100% |
 | App routes (`src/app/**`) | 100% |
 | React components | 99.69% |
 | MP provider + sub-services | 99.72% |
 
-**Total**: 1,015 tests across 59 test files — 99.74% statements, 97.21% branches, 99.31% functions, 99.91% lines.
+**Total**: 1,049 tests across 61 test files — 99.75% statements, 97.5% branches, 99.33% functions, 99.91% lines.
 
 ### Test Configuration
 
